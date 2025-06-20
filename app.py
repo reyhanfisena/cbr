@@ -3,6 +3,7 @@ import pandas as pd
 from cbr_engine import CBREngine
 import datetime
 import os
+import numpy as np # Ditambahkan untuk menangani nilai NaN
 
 # --- PATH KONSTAN SESUAI STRUKTUR ---
 DATA_FILE_PATH = 'knowledge_base/data_historis.csv'
@@ -58,6 +59,11 @@ if st.button("Jalankan Prediksi / Simulasi", type="primary", use_container_width
         col2.metric("📏 Rentang Prediksi 95%", f"{interval[0]:,.0f} - {interval[1]:,.0f}")
         col3.metric("🌀 Entropi (Ketidakpastian)", f"{result['entropy']:.4f}")
 
+        # --- LOGIKA PENYIMPANAN YANG DIMODIFIKASI ---
+        actual_price = np.nan
+        error = np.nan
+
+        # Cek dan hitung harga aktual hanya jika tanggalnya masa lalu/sekarang
         if target_date <= datetime.date.today():
             full_df = pd.read_csv(DATA_FILE_PATH, encoding='utf-8-sig')
             full_df['Tanggal'] = pd.to_datetime(full_df['Tanggal'], format='%d/%m/%Y').dt.date
@@ -67,28 +73,29 @@ if st.button("Jalankan Prediksi / Simulasi", type="primary", use_container_width
                 actual_price = float(str(actual_row.iloc[0]['Terakhir']).replace('.', '', regex=False).replace(',', '.', regex=False))
                 error = pred - actual_price
                 st.metric("✔️ Harga Aktual", f"{actual_price:,.2f}", delta=f"Error: {error:,.2f}", delta_color="inverse")
-
-                log_data = {
-                    'Tanggal_Prediksi': target_date.strftime('%Y-%m-%d'),
-                    'Harga_Aktual': actual_price,
-                    'Harga_Prediksi': pred,
-                    'Error_Absolut': abs(error),
-                    'K': st.session_state.k_value,
-                    'Window_Size': st.session_state.window_size,
-                    'Lambda': st.session_state.lambda_val,
-                    'Uncertainty_StdDev': std_dev
-                }
-
-                log_df = pd.DataFrame([log_data])
-                if not os.path.exists(LOG_FILE_PATH) or os.path.getsize(LOG_FILE_PATH) == 0:
-                    log_df.to_csv(LOG_FILE_PATH, index=False, encoding='utf-8-sig')
-                else:
-                    log_df.to_csv(LOG_FILE_PATH, mode='a', header=False, index=False, encoding='utf-8-sig')
-
-                st.success("✔️ Pengalaman berhasil disimpan ke log!")
-                st.dataframe(log_df)
             else:
-                st.warning("❗ Tidak ditemukan harga aktual untuk tanggal tersebut.")
+                st.warning("❗ Tidak ditemukan harga aktual untuk perbandingan pada tanggal tersebut.")
+        
+        # Selalu simpan hasil prediksi/simulasi ke log
+        log_data = {
+            'Tanggal_Prediksi': target_date.strftime('%Y-%m-%d'),
+            'Harga_Aktual': actual_price,
+            'Harga_Prediksi': pred,
+            'Error_Absolut': abs(error) if pd.notna(error) else np.nan,
+            'K': st.session_state.k_value,
+            'Window_Size': st.session_state.window_size,
+            'Lambda': st.session_state.lambda_val,
+            'Uncertainty_StdDev': std_dev
+        }
+
+        log_df = pd.DataFrame([log_data])
+        if not os.path.exists(LOG_FILE_PATH) or os.path.getsize(LOG_FILE_PATH) == 0:
+            log_df.to_csv(LOG_FILE_PATH, index=False, encoding='utf-8-sig')
+        else:
+            log_df.to_csv(LOG_FILE_PATH, mode='a', header=False, index=False, encoding='utf-8-sig')
+
+        st.success("✔️ Pengalaman/Prediksi berhasil disimpan ke log!")
+        st.dataframe(log_df)
 
         with st.expander("Lihat Detail Kasus Terdekat"):
             st.dataframe(result['k_neighbors_info'])

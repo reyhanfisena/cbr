@@ -28,15 +28,10 @@ class CBREngine:
         
         # 1a. Muat Data Faktual (Ground Truth)
         try:
-            # FIX 1: Menambahkan encoding='utf-8-sig' untuk mengatasi karakter tersembunyi (BOM)
             df = pd.read_csv(self.data_filepath, encoding='utf-8-sig')
         except FileNotFoundError:
             raise FileNotFoundError(f"File data tidak ditemukan di: {self.data_filepath}")
             
-        # FIX 2: Menghapus baris rename yang tidak perlu karena nama kolom sudah 'Tanggal'
-        # df.rename(columns={'Tgl.': self.date_col}, inplace=True) 
-        
-        # FIX 3: Memperbaiki format tanggal dari '.' menjadi '/'
         df[self.date_col] = pd.to_datetime(df[self.date_col], format='%d/%m/%Y')
         df.sort_values(self.date_col, ascending=True, inplace=True)
         
@@ -51,24 +46,32 @@ class CBREngine:
         if len(self.raw_df) < 1:
             raise ValueError("Tidak ada data yang tersedia untuk tanggal yang dipilih atau sebelumnya.")
         
-        # Normalisasi Fitur Harga
         self.scaled_features = self.scaler.fit_transform(self.raw_df[self.features])
         self.scaled_df = pd.DataFrame(self.scaled_features, columns=self.features)
         self.scaled_df[self.date_col] = self.raw_df[self.date_col]
 
-        # 1b. Muat & Gabungkan Pengetahuan Pengalaman (Log Error) - INTI DARI RETAIN CERDAS
+        # 1b. Muat & Gabungkan Pengetahuan Pengalaman (Log Error) - MODIFIKASI
         self.knowledge_df = self.scaled_df.copy()
-        if os.path.exists(self.log_filepath):
+        if os.path.exists(self.log_filepath) and os.path.getsize(self.log_filepath) > 0:
             log_df = pd.read_csv(self.log_filepath)
             log_df.rename(columns={'Tanggal_Prediksi': self.date_col}, inplace=True)
             log_df[self.date_col] = pd.to_datetime(log_df[self.date_col])
             
             if not log_df.empty and 'Error_Absolut' in log_df.columns:
-                log_df['E_norm'] = self.error_scaler.fit_transform(log_df[['Error_Absolut']])
-                self.knowledge_df = pd.merge(self.knowledge_df, log_df[[self.date_col, 'E_norm']], on=self.date_col, how='left')
-                self.knowledge_df['E_norm'].fillna(0, inplace=True)
+                # Saring log untuk hanya menggunakan baris yang memiliki nilai error (bukan NaN)
+                valid_error_logs = log_df.dropna(subset=['Error_Absolut']).copy()
+                
+                if not valid_error_logs.empty:
+                    # Lakukan penskalaan error hanya pada data yang valid
+                    valid_error_logs['E_norm'] = self.error_scaler.fit_transform(valid_error_logs[['Error_Absolut']])
+                    self.knowledge_df = pd.merge(self.knowledge_df, valid_error_logs[[self.date_col, 'E_norm']], on=self.date_col, how='left')
+                    self.knowledge_df['E_norm'].fillna(0, inplace=True)
+                else:
+                    self.knowledge_df['E_norm'] = 0 # Tidak ada log valid untuk dipelajari
+            else:
+                self.knowledge_df['E_norm'] = 0
         else:
-            self.knowledge_df['E_norm'] = 0
+            self.knowledge_df['E_norm'] = 0 # Log tidak ada, maka error dianggap 0
 
     def _create_case_base(self, window_size: int):
         if len(self.knowledge_df) <= window_size:
